@@ -1,7 +1,6 @@
 package hysteria2
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -68,13 +67,17 @@ func (m *udpMessage) releaseMessage() {
 }
 
 func (m *udpMessage) pack() *buf.Buffer {
+	// The header by hand: binary.Write and a string writer allocated on every datagram (miray T-079).
 	buffer := buf.NewSize(m.headerSize() + m.data.Len())
+	header := buffer.Extend(8)
+	binary.BigEndian.PutUint32(header, m.sessionID)
+	binary.BigEndian.PutUint16(header[4:], m.packetID)
+	header[6] = m.fragmentID
+	header[7] = m.fragmentTotal
+	var length [8]byte
 	common.Must(
-		binary.Write(buffer, binary.BigEndian, m.sessionID),
-		binary.Write(buffer, binary.BigEndian, m.packetID),
-		binary.Write(buffer, binary.BigEndian, m.fragmentID),
-		binary.Write(buffer, binary.BigEndian, m.fragmentTotal),
-		protocol.WriteVString(buffer, m.destination),
+		common.Error(buffer.Write(quicvarint.Append(length[:0], uint64(len(m.destination))))),
+		common.Error(buffer.WriteString(m.destination)),
 		common.Error(buffer.Write(m.data.Bytes())),
 	)
 	return buffer
@@ -407,27 +410,28 @@ func newPacketItem() *packetItem {
 }
 
 func decodeUDPMessage(message *udpMessage, data []byte) error {
-	reader := bytes.NewReader(data)
-	err := binary.Read(reader, binary.BigEndian, &message.sessionID)
+	// Parsed in place: a bytes.Reader, binary.Read and a byte copy of the address cost
+	// several allocations per datagram (miray T-079). Errors are those of the old reader.
+	if len(data) < 8 {
+		return io.ErrUnexpectedEOF
+	}
+	message.sessionID = binary.BigEndian.Uint32(data)
+	message.packetID = binary.BigEndian.Uint16(data[4:])
+	message.fragmentID = data[6]
+	message.fragmentTotal = data[7]
+	data = data[8:]
+	length, n, err := quicvarint.Parse(data)
 	if err != nil {
 		return err
 	}
-	err = binary.Read(reader, binary.BigEndian, &message.packetID)
-	if err != nil {
-		return err
+	if length > protocol.MaxAddressLength {
+		return errors.New("invalid address length")
 	}
-	err = binary.Read(reader, binary.BigEndian, &message.fragmentID)
-	if err != nil {
-		return err
+	data = data[n:]
+	if uint64(len(data)) < length {
+		return io.ErrUnexpectedEOF
 	}
-	err = binary.Read(reader, binary.BigEndian, &message.fragmentTotal)
-	if err != nil {
-		return err
-	}
-	message.destination, err = protocol.ReadVString(reader)
-	if err != nil {
-		return err
-	}
-	message.data = buf.As(data[len(data)-reader.Len():])
+	message.destination = string(data[:length])
+	message.data = buf.As(data[length:])
 	return nil
 }
