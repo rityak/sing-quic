@@ -9,12 +9,13 @@ func (c *Client) loopMessages(conn *clientQUICConnection) {
 			conn.closeWithError(E.Cause(err, "receive message"))
 			return
 		}
-		go func() {
-			hErr := c.handleMessage(conn, message)
-			if hErr != nil {
-				conn.closeWithError(E.Cause(hErr, "handle message"))
-			}
-		}()
+		// Handled in order, like the server does: delivery never blocks, and a
+		// goroutine per datagram reorders a flow and adds scheduling delay.
+		hErr := c.handleMessage(conn, message)
+		if hErr != nil {
+			conn.closeWithError(E.Cause(hErr, "handle message"))
+			return
+		}
 	}
 }
 
