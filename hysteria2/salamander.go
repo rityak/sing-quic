@@ -20,10 +20,14 @@ type SalamanderPacketConn struct {
 }
 
 func NewSalamanderConn(conn net.PacketConn, password []byte) net.PacketConn {
-	return &SalamanderPacketConn{
+	s := &SalamanderPacketConn{
 		PacketConn: conn,
 		password:   slices.Clip(password),
 	}
+	if c := newSalamanderOOB(s); c != nil {
+		return c
+	}
+	return s
 }
 
 // key is blake2b-256(password || salt); a usual password needs no heap copy (miray T-086).
