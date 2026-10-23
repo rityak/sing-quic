@@ -75,6 +75,8 @@ type Service[U comparable] struct {
 	realmServer           *realm.Server
 	setBBRCongestion      SetCongestionControllerFunc
 	udpMTU                int
+	activeAccess          sync.Mutex
+	activeConns           map[*quic.Conn]struct{}
 }
 
 func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
@@ -201,12 +203,29 @@ func (s *Service[U]) startWithRealm(conn net.PacketConn) error {
 	return nil
 }
 
+// Close stops accepting and closes the accepted connections with CONNECTION_CLOSE, as
+// sing-box does on shutdown: closing the listener alone leaves them to the client's
+// idle timeout once the socket is gone.
 func (s *Service[U]) Close() error {
 	var realmErr error
 	if s.realmServer != nil {
 		realmErr = s.realmServer.Close()
 	}
-	return E.Errors(realmErr, common.Close(s.quicListener))
+	listenerErr := common.Close(s.quicListener)
+	s.activeAccess.Lock()
+	conns := s.activeConns
+	s.activeConns = nil
+	s.activeAccess.Unlock()
+	var wg sync.WaitGroup
+	for conn := range conns {
+		wg.Add(1)
+		go func(conn *quic.Conn) {
+			defer wg.Done()
+			_ = conn.CloseWithError(0, "")
+		}(conn)
+	}
+	wg.Wait()
+	return E.Errors(realmErr, listenerErr)
 }
 
 func (s *Service[U]) Reset() {
@@ -231,6 +250,17 @@ func (s *Service[U]) loopConnections(listener *quic.Listener) {
 }
 
 func (s *Service[U]) handleConnection(connection *quic.Conn) {
+	s.activeAccess.Lock()
+	if s.activeConns == nil {
+		s.activeConns = make(map[*quic.Conn]struct{})
+	}
+	s.activeConns[connection] = struct{}{}
+	s.activeAccess.Unlock()
+	defer func() {
+		s.activeAccess.Lock()
+		delete(s.activeConns, connection)
+		s.activeAccess.Unlock()
+	}()
 	session := &serverSession[U]{
 		Service:    s,
 		ctx:        s.ctx,
