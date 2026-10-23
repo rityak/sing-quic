@@ -9,6 +9,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/metacubex/http"
@@ -700,7 +701,7 @@ type clientConn struct {
 	*quic.Stream
 	destination    M.Socksaddr
 	requestWritten bool
-	responseRead   bool
+	responseRead   atomic.Bool // Close reads it from the relay's other goroutine
 }
 
 func (c *clientConn) NeedHandshake() bool {
@@ -708,7 +709,7 @@ func (c *clientConn) NeedHandshake() bool {
 }
 
 func (c *clientConn) Read(p []byte) (n int, err error) {
-	if c.responseRead {
+	if c.responseRead.Load() {
 		n, err = c.Stream.Read(p)
 		return n, baderror.WrapQUIC(err)
 	}
@@ -720,7 +721,7 @@ func (c *clientConn) Read(p []byte) (n int, err error) {
 		err = E.New("remote error: ", errorMessage)
 		return
 	}
-	c.responseRead = true
+	c.responseRead.Store(true)
 	n, err = c.Stream.Read(p)
 	return n, baderror.WrapQUIC(err)
 }
@@ -749,7 +750,12 @@ func (c *clientConn) RemoteAddr() net.Addr {
 }
 
 func (c *clientConn) Close() error {
-	c.Stream.CancelRead(0)
+	// Until the server's response is read, close only the send side, as the hysteria
+	// client does: the server may still be dialling, and a server that cannot write its
+	// response (sing-box) drops the connection with the upload it already has (miray T-105).
+	if c.responseRead.Load() {
+		c.Stream.CancelRead(0)
+	}
 	err := c.Stream.Close()
 	// quic-go's Stream.Close does not unblock a Write blocked on flow control,
 	// but a past write deadline does; buffered data and the FIN are unaffected.
