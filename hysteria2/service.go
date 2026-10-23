@@ -398,7 +398,14 @@ func (c *serverConn) HandshakeSuccess() error {
 	c.responseWritten = true
 	buffer := protocol.WriteTCPResponse(true, "", nil)
 	defer buffer.Release()
-	return common.Error(c.Stream.Write(buffer.Bytes()))
+	_, err := c.Stream.Write(buffer.Bytes())
+	var streamErr *quic.StreamError
+	if errors.As(err, &streamErr) && streamErr.Remote {
+		// The client stopped reading (STOP_SENDING) but what it sent is still valid: forward it,
+		// as the protocol's own server does, which ignores this write's error.
+		return nil
+	}
+	return err
 }
 
 func (c *serverConn) Read(p []byte) (n int, err error) {
