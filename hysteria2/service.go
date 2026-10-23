@@ -77,6 +77,7 @@ type Service[U comparable] struct {
 	udpMTU                int
 	activeAccess          sync.Mutex
 	activeConns           map[*quic.Conn]struct{}
+	closed                bool // under activeAccess, as quicListener: Start may run after Close
 }
 
 func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
@@ -178,7 +179,9 @@ func (s *Service[U]) Start(conn net.PacketConn) error {
 	if err != nil {
 		return err
 	}
-	s.quicListener = listener
+	if !s.setListener(listener) {
+		return net.ErrClosed
+	}
 	go s.loopConnections(listener)
 	return nil
 }
@@ -198,9 +201,24 @@ func (s *Service[U]) startWithRealm(conn net.PacketConn) error {
 	if err != nil {
 		return E.Errors(err, s.realmServer.Close())
 	}
-	s.quicListener = listener
+	if !s.setListener(listener) {
+		return net.ErrClosed
+	}
 	go s.loopConnections(listener)
 	return nil
+}
+
+// setListener keeps the listener Start made; after Close it closes it instead (the
+// inbound starts the service in its own goroutine, so Close can come first).
+func (s *Service[U]) setListener(listener io.Closer) bool {
+	s.activeAccess.Lock()
+	defer s.activeAccess.Unlock()
+	if s.closed {
+		_ = listener.Close()
+		return false
+	}
+	s.quicListener = listener
+	return true
 }
 
 // Close stops accepting and closes the accepted connections with CONNECTION_CLOSE, as
@@ -211,11 +229,13 @@ func (s *Service[U]) Close() error {
 	if s.realmServer != nil {
 		realmErr = s.realmServer.Close()
 	}
-	listenerErr := common.Close(s.quicListener)
 	s.activeAccess.Lock()
+	s.closed = true
+	quicListener := s.quicListener
 	conns := s.activeConns
 	s.activeConns = nil
 	s.activeAccess.Unlock()
+	listenerErr := common.Close(quicListener)
 	var wg sync.WaitGroup
 	for conn := range conns {
 		wg.Add(1)
