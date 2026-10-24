@@ -75,7 +75,7 @@ type Service[U comparable] struct {
 	realmServer           *realm.Server
 	setBBRCongestion      SetCongestionControllerFunc
 	udpMTU                int
-	activeAccess          sync.Mutex
+	activeAccess          *sync.Mutex // a pointer: mihomo copies the service per listen address before Start
 	activeConns           map[*quic.Conn]struct{}
 	closed                bool // under activeAccess, as quicListener: Start may run after Close
 }
@@ -135,6 +135,7 @@ func NewService[U comparable](options ServiceOptions) (*Service[U], error) {
 		}
 	}
 	return &Service[U]{
+		activeAccess:          new(sync.Mutex),
 		ctx:                   options.Context,
 		logger:                options.Logger,
 		brutalDebug:           options.BrutalDebug,
