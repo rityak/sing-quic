@@ -176,22 +176,18 @@ func (c *Client) nextHopInterval() time.Duration {
 	return c.hopInterval + time.Duration(randv2.Int64N(int64(c.hopIntervalMax-c.hopInterval)+1))
 }
 
-func (c *Client) hopLoop(conn *clientQUICConnection) {
+func (c *Client) hopLoop(conn *clientQUICConnection, hopper *portHopper) {
 	timer := time.NewTimer(c.nextHopInterval())
 	defer timer.Stop()
 	c.logger.Debug("Entering hop loop ...")
-	remoteAddr, ok := conn.quicConn.RemoteAddr().(*net.UDPAddr)
-	if !ok || remoteAddr == nil {
-		c.logger.Error("Failed to get remote address for hop", remoteAddr)
+	if _, ok := conn.quicConn.RemoteAddr().(*net.UDPAddr); !ok {
+		c.logger.Error("Failed to get remote address for hop", conn.quicConn.RemoteAddr())
 		return
 	}
 	for {
 		select {
 		case <-timer.C:
-			targetAddr := *remoteAddr                                             // make a copy
-			targetAddr.Port = int(c.serverPorts[randv2.IntN(len(c.serverPorts))]) // only change port
-			conn.quicConn.SetRemoteAddr(&targetAddr)
-			c.logger.Debug("Hopped to ", &targetAddr)
+			c.logger.Debug("Hopped to ", hopper.hop(true))
 			timer.Reset(c.nextHopInterval())
 			continue
 		case <-c.ctx.Done():
@@ -513,7 +509,14 @@ func (c *Client) authenticateAndWrap(ctx context.Context, packetDialer qtls.Pack
 		return pc, nil
 	})
 
-	packetConn, quicConn, err := c.quicDialer.DialContext(ctx, serverAddr.String(), packetDialer, c.tlsConfig, c.quicConfig, true)
+	quicConfig := c.quicConfig
+	var hopper *portHopper
+	if c.hopInterval > 0 {
+		hopper = newPortHopper(c.serverPorts, c.logger)
+		quicConfig = quicConfig.Clone()
+		quicConfig.ConnectionRefused = hopper.refused
+	}
+	packetConn, quicConn, err := c.quicDialer.DialContext(ctx, serverAddr.String(), packetDialer, c.tlsConfig, quicConfig, true)
 	if err != nil {
 		return nil, err
 	}
@@ -573,8 +576,9 @@ func (c *Client) authenticateAndWrap(ctx context.Context, packetDialer qtls.Pack
 		<-quicConn.Context().Done()
 		conn.closeWithError(context.Cause(quicConn.Context()))
 	}()
-	if c.hopInterval > 0 {
-		go c.hopLoop(conn)
+	if hopper != nil {
+		hopper.attach(quicConn)
+		go c.hopLoop(conn, hopper)
 	}
 	return conn, nil
 }
