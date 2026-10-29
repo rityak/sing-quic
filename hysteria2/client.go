@@ -187,7 +187,7 @@ func (c *Client) hopLoop(conn *clientQUICConnection, hopper *portHopper) {
 	for {
 		select {
 		case <-timer.C:
-			c.logger.Debug("Hopped to ", hopper.hop(true))
+			c.logger.Debug("Hopped to ", hopper.hop())
 			timer.Reset(c.nextHopInterval())
 			continue
 		case <-c.ctx.Done():
