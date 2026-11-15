@@ -24,4 +24,4 @@ require (
 	golang.org/x/text v0.22.0 // indirect
 )
 
-replace github.com/metacubex/quic-go => github.com/rityak/quic-go v0.61.1-0.20261029153018-dddc617d9406
+replace github.com/metacubex/quic-go => github.com/rityak/quic-go v0.61.1-0.20261115102657-a6ba8bb51c89

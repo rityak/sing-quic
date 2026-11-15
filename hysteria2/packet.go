@@ -131,6 +131,11 @@ type udpPacketConn struct {
 	onDestroy       func()
 	readWaitOptions N.ReadWaitOptions
 	readDeadline    pipe.Deadline
+	writeMu         sync.Mutex
+	writeContext    context.Context
+	writeCancel     context.CancelFunc
+	writeDeadline   time.Time
+	writeGeneration uint64
 }
 
 func newUDPPacketConn(ctx context.Context, quicConn *quic.Conn, onDestroy func(), udpMTU int) *udpPacketConn {
@@ -144,6 +149,7 @@ func newUDPPacketConn(ctx context.Context, quicConn *quic.Conn, onDestroy func()
 		onDestroy:    onDestroy,
 		udpMTU:       udpMTU,
 		readDeadline: pipe.MakeDeadline(),
+		writeContext: ctx,
 	}
 }
 
@@ -290,7 +296,28 @@ func (c *udpPacketConn) writePackets(messages []*udpMessage) error {
 func (c *udpPacketConn) writePacket(message *udpMessage) error {
 	buffer := message.pack()
 	defer buffer.Release()
-	return c.quicConn.SendDatagram(buffer.Bytes())
+	for {
+		c.writeMu.Lock()
+		ctx, deadline, generation := c.writeContext, c.writeDeadline, c.writeGeneration
+		c.writeMu.Unlock()
+		err := ctx.Err()
+		if err == nil {
+			err = c.quicConn.SendDatagramWithDeadline(ctx, buffer.Bytes(), deadline)
+		}
+		c.writeMu.Lock()
+		changed := generation != c.writeGeneration
+		c.writeMu.Unlock()
+		if err != nil && changed && c.ctx.Err() == nil {
+			continue
+		}
+		if err != nil && c.ctx.Err() != nil {
+			return net.ErrClosed
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			return os.ErrDeadlineExceeded
+		}
+		return err
+	}
 }
 
 func (c *udpPacketConn) Close() error {
@@ -310,7 +337,8 @@ func (c *udpPacketConn) LocalAddr() net.Addr {
 }
 
 func (c *udpPacketConn) SetDeadline(t time.Time) error {
-	return os.ErrInvalid
+	c.readDeadline.Set(t)
+	return c.SetWriteDeadline(t)
 }
 
 func (c *udpPacketConn) SetReadDeadline(t time.Time) error {
@@ -319,7 +347,22 @@ func (c *udpPacketConn) SetReadDeadline(t time.Time) error {
 }
 
 func (c *udpPacketConn) SetWriteDeadline(t time.Time) error {
-	return os.ErrInvalid
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if c.ctx.Err() != nil {
+		return net.ErrClosed
+	}
+	if c.writeCancel != nil {
+		c.writeCancel()
+	}
+	if t.IsZero() {
+		c.writeContext, c.writeCancel = context.WithCancel(c.ctx)
+	} else {
+		c.writeContext, c.writeCancel = context.WithDeadline(c.ctx, t)
+	}
+	c.writeDeadline = t
+	c.writeGeneration++
+	return nil
 }
 
 func (c *udpPacketConn) ReaderMTU() int {

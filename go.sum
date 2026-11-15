@@ -18,8 +18,8 @@ github.com/metacubex/sing v0.5.2/go.mod h1:ypf0mjwlZm0sKdQSY+yQvmsbWa0hNPtkeqyRM
 github.com/metacubex/tls v0.1.7 h1:7YW+7z2xGH1bozSg04q3gKNd7GBSiTSXIrQY2SMnfoE=
 github.com/metacubex/tls v0.1.7/go.mod h1:0XeVdL0cBw+8i5Hqy3lVeP9IyD/LFTq02ExvHM6rzEM=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
-github.com/rityak/quic-go v0.61.1-0.20261029153018-dddc617d9406 h1:51cS1i8JFHxhwbwyiTBczjFpHSXcGjqyeBVyjqRhML0=
-github.com/rityak/quic-go v0.61.1-0.20261029153018-dddc617d9406/go.mod h1:KTmibo7vZo0gCxdFWrPEQ/u/RGt92mJkrXDE2Qg2/AU=
+github.com/rityak/quic-go v0.61.1-0.20261115102657-a6ba8bb51c89 h1:VdewrPJG3BOmPFg/CwpT9Yio58GnhU8S7wqXtuxfUOs=
+github.com/rityak/quic-go v0.61.1-0.20261115102657-a6ba8bb51c89/go.mod h1:KTmibo7vZo0gCxdFWrPEQ/u/RGt92mJkrXDE2Qg2/AU=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 go.uber.org/mock v0.4.0 h1:VcM4ZOtdbR4f6VXfiOpwpVJDL6lCReaZ6mw31wqh7KU=
 golang.org/x/crypto v0.33.0 h1:IOBPskki6Lysi0lo9qQvbxiQ+FvsCC/YWOecCHAixus=
